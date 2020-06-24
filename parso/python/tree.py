@@ -330,6 +330,8 @@ class Keyword(_LeafWithoutNewlines, _StringComparisonMixin):
     type = 'keyword'
     __slots__ = ()
 
+class SoftKeyword(Keyword):
+    type = 'soft_keyword'
 
 class Scope(PythonBaseNode, DocstringMixin):
     """

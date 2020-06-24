@@ -25,7 +25,61 @@ complexity of the ``Parser`` (there's another parser sitting inside
 """
 from parso import tree
 from parso.pgen2.generator import ReservedString
+from contextlib import contextmanager
 
+class _TokenGeneratorProxy:
+    def __init__(self, generator):
+        self._tokens = generator
+        self._counter = 0
+        self._release_ranges = []
+
+    @contextmanager
+    def release(self):
+        self._release_ranges.append([self._counter, None, []])
+        try:
+            yield self
+        finally:
+            # Lock the last release range to the final position that
+            # has been eaten.
+            total_eaten = len(self._release_ranges[-1][2])
+            self._release_ranges[-1][1] = self._counter + total_eaten
+
+    def eat(self, point):
+        eaten_tokens = self._release_ranges[-1][2]
+        if point < len(eaten_tokens):
+            return eaten_tokens[point]
+        else:
+            while point >= len(eaten_tokens):
+                token = next(self._tokens)
+                eaten_tokens.append(token)
+            return token
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        # If the current position is already compromised (looked up)
+        # return the eaten token, if not just go further on the given
+        # token producer.
+        for start, end, tokens in self._release_ranges:
+            assert end is not None
+            if start <= self._counter < end:
+                token = tokens[self._counter - start]
+                break
+        else:
+            token = next(self._tokens)
+        self._counter += 1
+        return token
+
+    def can_advance(self, to):
+        # Try to eat, fail if it can't. The eat operation is cached
+        # so there wont be any additional cost of eating here
+        try:
+            self.eat(self._counter + to)
+        except StopIteration:
+            return False
+        else:
+            return True
 
 class ParserSyntaxError(Exception):
     """
@@ -86,14 +140,15 @@ class StackNode(object):
 
 def _token_to_transition(grammar, type_, value):
     # Map from token to label
-    if type_.contains_syntax:
+    if type_.contains_syntax and value in grammar.reserved_syntax_strings:
         # Check for reserved words (keywords)
-        try:
-            return grammar.reserved_syntax_strings[value]
-        except KeyError:
-            pass
+        reserved_string = grammar.reserved_syntax_strings[value]
+        if reserved_string.soft:
+            return reserved_string, type_
+        else:
+            return reserved_string,
 
-    return type_
+    return type_,
 
 
 class BaseParser(object):
@@ -123,8 +178,9 @@ class BaseParser(object):
     def parse(self, tokens):
         first_dfa = self._pgen_grammar.nonterminal_to_dfas[self._start_nonterminal][0]
         self.stack = Stack([StackNode(first_dfa)])
+        self._tokens = _TokenGeneratorProxy(tokens)
 
-        for token in tokens:
+        for token in self._tokens:
             self._add_token(token)
 
         while True:
@@ -174,11 +230,60 @@ class BaseParser(object):
         grammar = self._pgen_grammar
         stack = self.stack
         type_, value, start_pos, prefix = token
-        transition = _token_to_transition(grammar, type_, value)
+        possible_transitions = _token_to_transition(grammar, type_, value)
+
+        def get_possible_plan(possible_transitions, transition_table):
+            possible_plans = []
+            for transition in possible_transitions:
+                possible_plan = transition_table.get(transition)
+                if possible_plan is not None:
+                    possible_plans.append(possible_plan)
+            if len(possible_plans) == 0:
+                return None
+            elif len(possible_plans) == 1:
+                return possible_plans[0]
+            else:
+                # This part is something between LL(1) - LL(k[k>1]). In most of the
+                # time, where the soft keyword is encountered within a state that
+                # produces only 1 possible plan, the parser is always LL(1). But
+                # for cases which this can't be prevented, we do our best to keep it
+                # optimal and doesn't fill all tokens into the memory. The strategy
+                # is trying to unwind all DFA pushes for all possible generated plans
+                # and keep record of eaten tokens per plan. The most eated plan, will
+                # be choosed. The tokens between the start of this operation to where
+                # it ends will be eaten but the rest won't be touched and will come
+                # one by one.
+
+                with self._tokens.release() as token_proxy:
+                    max_advancing = dict.fromkeys(possible_plans, 0)
+                    for possible_plan in possible_plans:
+                        next_possible_plan = possible_plan
+                        counter = 0
+                        while token_proxy.can_advance(counter):
+                            token = token_proxy.eat(counter)
+                            next_transitions = _token_to_transition(grammar, *token[:2])
+                            for dfa_push in reversed(next_possible_plan.dfa_pushes):
+                                rewinding_dfa_ctx = get_possible_plan(next_transitions, dfa_push.transitions)
+                                if rewinding_dfa_ctx is not None:
+                                    break
+                            else:
+                                break
+                            next_possible_plan = rewinding_dfa_ctx
+                            counter += 1
+                        max_advancing[possible_plan] = counter
+                    max_eater, max_eaten = max(max_advancing.items(), key = lambda kv: kv[1])
+                    return max_eater
 
         while True:
             try:
-                plan = stack[-1].dfa.transitions[transition]
+                # Try all possible transitions, if a match found
+                # exit the for loop, which will result in exit in
+                # this while True loop. If nothing found, it will
+                # exit gracefully and then the else block will raise
+                # a KeyError to drop the error_recovery system.
+                plan = get_possible_plan(possible_transitions, stack[-1].dfa.transitions)
+                if plan is None:
+                    raise KeyError
                 break
             except KeyError:
                 if stack[-1].dfa.is_final:

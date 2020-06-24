@@ -5,6 +5,7 @@
 # Copyright David Halter and Contributors
 # Modifications are dual-licensed: MIT and PSF.
 
+import ast
 from parso.python.tokenize import tokenize
 from parso.utils import parse_version_string
 from parso.python.token import PythonTokenTypes
@@ -157,3 +158,16 @@ class NFAState(object):
 
     def __repr__(self):
         return '<%s: from %s>' % (self.__class__.__name__, self.from_rule)
+
+def metadata_extractor(bnf_grammar):
+    """Extracts the parso specific metadata (just like compiler pragmas)
+    from the EBNF grammar's header as comments of python dict literals.
+
+    # metadata = {key: value, ...}
+    """
+    metadata = {}
+    for line in bnf_grammar.splitlines():
+        if line.startswith("#") and "metadata" in line:
+            value = line.split("=", 1)[1].strip()
+            metadata.update(ast.literal_eval(value))
+    return metadata

@@ -28,7 +28,7 @@ because we made some optimizations.
 
 from ast import literal_eval
 
-from parso.pgen2.grammar_parser import GrammarParser, NFAState
+from parso.pgen2.grammar_parser import GrammarParser, NFAState, metadata_extractor
 
 
 class Grammar(object):
@@ -126,11 +126,12 @@ class ReservedString(object):
     This class basically is the former.
     """
 
-    def __init__(self, value):
+    def __init__(self, value, is_soft):
         self.value = value
+        self.soft = is_soft
 
     def __repr__(self):
-        return '%s(%s)' % (self.__class__.__name__, self.value)
+        return '%s(%s, is_soft=%s)' % (self.__class__.__name__, self.value, self.soft)
 
 
 def _simplify_dfas(dfas):
@@ -257,6 +258,7 @@ def generate_grammar(bnf_grammar, token_namespace):
         if start_nonterminal is None:
             start_nonterminal = nfa_a.from_rule
 
+    grammar_metadata = metadata_extractor(bnf_grammar)
     reserved_strings = {}
     for nonterminal, dfas in rule_to_dfas.items():
         for dfa_state in dfas:
@@ -267,6 +269,7 @@ def generate_grammar(bnf_grammar, token_namespace):
                     transition = _make_transition(
                         token_namespace,
                         reserved_strings,
+                        grammar_metadata,
                         terminal_or_nonterminal
                     )
                     dfa_state.transitions[transition] = DFAPlan(next_dfa)
@@ -275,7 +278,7 @@ def generate_grammar(bnf_grammar, token_namespace):
     return Grammar(start_nonterminal, rule_to_dfas, reserved_strings)
 
 
-def _make_transition(token_namespace, reserved_syntax_strings, label):
+def _make_transition(token_namespace, reserved_syntax_strings, grammar_metadata, label):
     """
     Creates a reserved string ("if", "for", "*", ...) or returns the token type
     (NUMBER, STRING, ...) for a given grammar terminal.
@@ -291,7 +294,8 @@ def _make_transition(token_namespace, reserved_syntax_strings, label):
         try:
             return reserved_syntax_strings[value]
         except KeyError:
-            r = reserved_syntax_strings[value] = ReservedString(value)
+            is_soft = value in grammar_metadata.get("soft_keywords", [])
+            r = reserved_syntax_strings[value] = ReservedString(value, is_soft)
             return r
 
 

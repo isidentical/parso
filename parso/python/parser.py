@@ -111,7 +111,12 @@ class Parser(BaseParser):
         # print('leaf', repr(value), token.tok_name[type])
         if type == NAME:
             if value in self._pgen_grammar.reserved_syntax_strings:
-                return tree.Keyword(value, start_pos, prefix)
+                reserved_string = self._pgen_grammar.reserved_syntax_strings[value]
+                if reserved_string.soft:
+                    constructor = tree.SoftKeyword
+                else:
+                    constructor = tree.Keyword
+                return constructor(value, start_pos, prefix)
             else:
                 return tree.Name(value, start_pos, prefix)
 

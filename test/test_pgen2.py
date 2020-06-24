@@ -301,15 +301,15 @@ def test_left_recursion():
         ['foo: bar | baz\nbar: NAME\nbaz: NAME\n',
          r"foo is ambiguous.*given a TokenType\(NAME\).*bar or baz"],
         ['''foo: bar | baz\nbar: 'x'\nbaz: "x"\n''',
-         r"foo is ambiguous.*given a ReservedString\(x\).*bar or baz"],
+         r"foo is ambiguous.*given a ReservedString\(x, is_soft=False\).*bar or baz"],
         ['''foo: bar | 'x'\nbar: 'x'\n''',
-         r"foo is ambiguous.*given a ReservedString\(x\).*bar or foo"],
+         r"foo is ambiguous.*given a ReservedString\(x, is_soft=False\).*bar or foo"],
         # An ambiguity with the second (not the first) child of a production
         ['outer: "a" [inner] "b" "c"\ninner: "b" "c" [inner]\n',
-         r"outer is ambiguous.*given a ReservedString\(b\).*inner or outer"],
+         r"outer is ambiguous.*given a ReservedString\(b, is_soft=False\).*inner or outer"],
         # An ambiguity hidden by a level of indirection (middle)
         ['outer: "a" [middle] "b" "c"\nmiddle: inner\ninner: "b" "c" [inner]\n',
-         r"outer is ambiguous.*given a ReservedString\(b\).*middle or outer"],
+         r"outer is ambiguous.*given a ReservedString\(b, is_soft=False\).*middle or outer"],
     ]
 )
 def test_ambiguities(grammar, error_match):
