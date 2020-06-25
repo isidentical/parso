@@ -256,26 +256,11 @@ class BaseParser(object):
 
                 dead_plans = set()
                 possible_plan_table = {possible_plan: [possible_plan] for possible_plan in possible_plans}
-                def superior_plan(table, winner=False):
-                    possibilities = {}
-                    for origin, branch in table.items():
-                        possibilities[origin] = len(branch)
-                    all_branch_lengths = tuple(possibilities.values())
-                    superior_origin, superior_branch_length = max(
-                        possibilities.items(), key=lambda kv: kv[1]
-                    )
-                    if (
-                        all_branch_lengths.count(superior_branch_length) == 1
-                        or winner
-                    ):
-                        return superior_origin
-                    else:
-                        return None
 
                 with self._tokens.release() as token_proxy:
                     counter = 0
 
-                    while superior_plan(possible_plan_table) is None:
+                    while self._superior_plan(possible_plan_table) is None:
                         if not token_proxy.can_advance(counter):
                             break # nothing to do, get the best plan we have
 
@@ -296,7 +281,7 @@ class BaseParser(object):
                             possible_plans.append(next_possible_plan)
                         counter += 1
 
-                    return superior_plan(possible_plan_table, winner = True)
+                    return self._superior_plan(possible_plan_table, winner = True)
 
         while True:
             try:
@@ -338,3 +323,19 @@ class BaseParser(object):
             new_node = self.convert_node(tos.dfa.from_rule, tos.nodes)
 
         self.stack[-1].nodes.append(new_node)
+
+    def _superior_plan(self, table, winner=False):
+        possibilities = {}
+        for origin, branch in table.items():
+            possibilities[origin] = len(branch)
+        all_branch_lengths = tuple(possibilities.values())
+        superior_origin, superior_branch_length = max(
+            possibilities.items(), key=lambda kv: kv[1]
+        )
+        if (
+            all_branch_lengths.count(superior_branch_length) == 1
+            or winner
+        ):
+            return superior_origin
+        else:
+            return None
