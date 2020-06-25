@@ -75,7 +75,7 @@ class _TokenGeneratorProxy:
         # Try to eat, fail if it can't. The eat operation is cached
         # so there wont be any additional cost of eating here
         try:
-            self.eat(self._counter + to)
+            self.eat(to)
         except StopIteration:
             return False
         else:
@@ -254,25 +254,49 @@ class BaseParser(object):
                 # it ends will be eaten but the rest won't be touched and will come
                 # one by one.
 
+                dead_plans = set()
+                possible_plan_table = {possible_plan: [possible_plan] for possible_plan in possible_plans}
+                def superior_plan(table, winner=False):
+                    possibilities = {}
+                    for origin, branch in table.items():
+                        possibilities[origin] = len(branch)
+                    all_branch_lengths = tuple(possibilities.values())
+                    superior_origin, superior_branch_length = max(
+                        possibilities.items(), key=lambda kv: kv[1]
+                    )
+                    if (
+                        all_branch_lengths.count(superior_branch_length) == 1
+                        or winner
+                    ):
+                        return superior_origin
+                    else:
+                        return None
+
                 with self._tokens.release() as token_proxy:
-                    max_advancing = dict.fromkeys(possible_plans, 0)
-                    for possible_plan in possible_plans:
-                        next_possible_plan = possible_plan
-                        counter = 0
-                        while token_proxy.can_advance(counter):
-                            token = token_proxy.eat(counter)
-                            next_transitions = _token_to_transition(grammar, *token[:2])
-                            for dfa_push in reversed(next_possible_plan.dfa_pushes):
-                                rewinding_dfa_ctx = get_possible_plan(next_transitions, dfa_push.transitions)
-                                if rewinding_dfa_ctx is not None:
+                    counter = 0
+
+                    while superior_plan(possible_plan_table) is None:
+                        if not token_proxy.can_advance(counter):
+                            break # nothing to do, get the best plan we have
+
+                        token = token_proxy.eat(counter)
+                        next_transitions = _token_to_transition(grammar, *token[:2])
+                        for origin, possible_plans in possible_plan_table.items():
+                            current_plan = possible_plans[-1]
+                            if origin in dead_plans:
+                                continue
+
+                            for dfa_push in reversed(current_plan.dfa_pushes):
+                                next_possible_plan = get_possible_plan(next_transitions, dfa_push.transitions)
+                                if next_possible_plan is not None:
                                     break
                             else:
-                                break
-                            next_possible_plan = rewinding_dfa_ctx
-                            counter += 1
-                        max_advancing[possible_plan] = counter
-                    max_eater, max_eaten = max(max_advancing.items(), key = lambda kv: kv[1])
-                    return max_eater
+                                dead_plans.add(origin)
+                                continue
+                            possible_plans.append(next_possible_plan)
+                        counter += 1
+
+                    return superior_plan(possible_plan_table, winner = True)
 
         while True:
             try:
